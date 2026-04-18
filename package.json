@@ -4,10 +4,11 @@
   "main": "lib/index.js",
   "typings": "lib/index.d.ts",
   "files": [
-    "lib",
-    "dist"
+    "lib"
   ],
-  "scripts": {},
+  "scripts": {
+    "build": "tsc"
+  },
   "koishi": {
     "description": {
       "en": "koishi-plugin-monetary-bourse expansion, adding dividend distribution based on holdings",
@@ -41,8 +42,17 @@
     "经济",
     "economy"
   ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/wj6ej3ck6y3/koishi-plugin-monetary-bourse-expansion"
+  },
   "devDependencies": {},
   "peerDependencies": {
+    "koishi": "^4.18.7",
+    "koishi-plugin-monetary": "^0.1.3",
+    "koishi-plugin-monetary-bourse": "^2.1.1"
+  },
+  "dependencies": {
     "koishi": "^4.18.7",
     "koishi-plugin-monetary": "^0.1.3",
     "koishi-plugin-monetary-bourse": "^2.1.1"

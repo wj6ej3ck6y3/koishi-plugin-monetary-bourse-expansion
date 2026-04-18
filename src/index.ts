@@ -29,8 +29,8 @@ declare module 'koishi' {
   }
   interface Context {
     monetary: {
-      add(userId: string, amount: number): Promise<void>
-      subtract(userId: string, amount: number): Promise<void>
+      gain(userId: string, amount: number): Promise<void>
+      cost(userId: string, amount: number): Promise<void>
       get(userId: string): Promise<number>
     }
     cron(expression: string, callback: () => Promise<void>): void
@@ -220,7 +220,7 @@ export function apply(ctx: Context, config: Config) {
           logger.warn(`用户 ${userId} 没有 uid，跳过发放`)
           continue
         }
-        await ctx.monetary.add(uid, dividend)
+        await ctx.monetary.gain(uid, dividend)
         totalDistributed += dividend
         successCount++
         logger.debug(`用户 ${userId} 获得股利 ${dividend}`)
