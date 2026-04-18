@@ -1,0 +1,254 @@
+import { Context, Schema } from 'koishi'
+
+// 扩展 Tables 接口
+declare module 'koishi' {
+  interface Tables {
+    dividend_log: {
+      id: number
+      date: Date
+      userId: string
+      amount: number
+    }
+    // 声明 bourse_history 表结构（只需要你使用的字段）
+    bourse_history: {
+      id: number
+      stockId: string
+      price: number
+      time: Date
+    }
+    // 声明 bourse_holding 表结构
+    bourse_holding: {
+      userId: string
+      stockId: string
+      amount: number
+    }
+    username: {
+      userId: string
+      uid: string
+    }
+  }
+  interface Context {
+    monetary: {
+      add(userId: string, amount: number): Promise<void>
+      subtract(userId: string, amount: number): Promise<void>
+      get(userId: string): Promise<number>
+    }
+    cron(expression: string, callback: () => Promise<void>): void
+  }
+}
+
+export const name = 'monetary-bourse-expansion'
+export const inject = {
+  required: ['database', 'monetary', 'cron'],
+  optional: []
+}
+export interface Config {
+  enableDividend: boolean// 是否启用股利发放功能
+  dividendSchedule: string// 定时任务的 cron 表达式
+  randomRatioMax: number// 随机股利比率上限比率百分比（0~10）
+  debugMode: boolean// 调试模式，为 true 时输出所有日志，为 false 时只输出 warn 和 error
+}
+
+export const Config: Schema<Config> = Schema.object({
+  enableDividend: Schema.boolean()
+    .default(true)
+    .description('是否启用股利发放功能'),
+  dividendSchedule: Schema.string()
+    .default('0 0 * * 1')        // 默认每周一0点
+    .description('定时任务的 cron 表达式，例如每周一0点：0 0 * * 1'),
+  randomRatioMax: Schema.number()
+    .default(1)
+    .min(0)
+    .max(10)
+    .description('随机股利上限比率百分比'),
+  debugMode: Schema.boolean()
+    .default(true)
+    .description('开启调试日志（显示 info/success 等非 error/warn 日志）'),
+})
+
+export function apply(ctx: Context, config: Config) {
+  const logger = {
+    info: (msg: string) => config.debugMode && ctx.logger.info(msg),
+    debug: (msg: string) => config.debugMode && ctx.logger.debug(msg),
+    warn: (msg: string) => ctx.logger.warn(msg),
+    error: (msg: string) => ctx.logger.error(msg),
+  }
+
+  // 扩展数据库表：用于记录股利发放日志，防止重复发放
+  ctx.database.extend('dividend_log', {
+    id: 'unsigned',// 自增主键
+    date: 'timestamp',// 发放日期（只记录年月日，时分为0）
+    userId: 'string',// 用户ID
+    amount: 'float',// 发放的股利金额
+  }, {
+    primary: 'id',
+    autoInc: true,
+    unique: [['date', 'userId']],
+  })
+  // 获取今日零点的时间戳（用于日志查询）
+  function getTodayMidnight(): Date {
+    const now = new Date()
+    now.setHours(0, 0, 0, 0)
+    return now
+  }
+  // 核心函数：执行股利发放
+  async function distributeDividend() {
+    // 如果未启用股利功能，直接返回
+    if (!config.enableDividend || config.randomRatioMax <= 0) {
+      logger.info('股利发放功能已禁用或股利比率为0，跳过发放')
+      return
+    }
+    const today = getTodayMidnight()
+    logger.info(`开始发放股利 (日期: ${today.toISOString().slice(0, 10)})`)
+
+    // 检查今日是否已经发放过
+    function getTodayRange() {
+      const now = new Date()
+      const start = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+      const end = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1)
+      return { start, end }
+    }
+    const { start, end } = getTodayRange()
+    const existingLogs = await ctx.database.get('dividend_log', {
+      date: { $gte: start, $lt: end }
+    })
+    if (existingLogs.length > 0) {
+      logger.info(`今日 (${today.toISOString().slice(0, 10)}) 已经发放过股利，跳过执行`)
+      return
+    }
+    // 获取所有股票的最新价格（从 bourse_history 表）
+    async function getLatestPrices(): Promise<Map<string, number>> {
+
+      // 获取所有股票 ID
+      const allHistory = await ctx.database.get('bourse_history', {}, { fields: ['stockId'] });
+      const stockIds = [...new Set(allHistory.map(r => r.stockId))];
+      if (stockIds.length === 0) return new Map()
+
+      // 获取每个股票的最新时间戳
+      const priceMap = new Map<string, number>()
+      for (const stockId of stockIds) {
+        const latest = await ctx.database.get('bourse_history', { stockId }, {
+          sort: { time: 'desc' },
+          limit: 1,
+        })
+        if (latest[0]) {
+          priceMap.set(stockId, latest[0].price)
+        }
+      }
+      logger.debug(`获取到 ${stockIds.length} 支股票的最新价格`)
+      return priceMap
+    }
+    // 从 bourse_holding 表中查询所有持仓记录
+    const holdings = await ctx.database.get('bourse_holding', {})
+
+    if (!holdings || holdings.length === 0) {
+      logger.info('没有找到任何持仓记录，股利发放结束')
+      return
+    }
+
+    // 获取所有股票的最新价格
+    const latestPrices = await getLatestPrices()
+    if (latestPrices.size === 0) {
+      logger.warn('无法获取股票最新价格，股利发放中止')
+      return
+    }
+
+    // 生成本次发放的随机比率（0 ~ randomRatioMax）
+    const ratio = Math.random() * config.randomRatioMax / 100
+    logger.info(`本次股利发放随机比率: ${(ratio * 100).toFixed(2)}%`)
+
+    // 更新所有股票的价格并记录到 bourse_history
+    const now = new Date()// 当前时间作为价格记录时间
+    const newPrices = new Map<string, number>()
+    // 获取所有被持仓的股票 ID
+    const heldStockIds = new Set(holdings.map(h => h.stockId))
+    const priceRecords = [];
+    for (const [stockId, currentPrice] of latestPrices.entries()) {
+      if (!heldStockIds.has(stockId)) continue// 跳过无持仓的股票
+      // 新价格 = 原价格 * (1 - 比率)
+      let newPrice = Math.round(currentPrice * (1 - ratio) * 100) / 100
+      // 避免价格出现负数（极小情况）
+      if (newPrice < 0) newPrice = 0
+      newPrices.set(stockId, newPrice)
+      priceRecords.push({ stockId, price: newPrice, time: now });
+    }
+    // 在循环外，将所有价格记录一次性插入
+    if (priceRecords.length) {
+      await ctx.database.upsert('bourse_history', priceRecords);
+    }
+
+    // 按用户汇总应得股利（遍历每一条持仓，根据股票最新价格计算）
+    let hasAnyAmount = false
+    const userDividendMap = new Map<string, number>()
+
+    for (const holding of holdings) {
+      const userId = holding.userId
+      const stockId = holding.stockId
+      const amount = holding.amount || 0
+      if (amount <= 0) continue
+
+      hasAnyAmount = true   // 标记存在正数持仓
+
+      const currentPrice = latestPrices.get(stockId)
+      if (!currentPrice) {
+        logger.warn(`股票 ${stockId} 无最新价格，跳过该持仓`)
+        continue
+      }
+
+      const dividend = Math.round(amount * currentPrice * ratio)
+      if (dividend <= 0) continue
+
+      userDividendMap.set(userId, (userDividendMap.get(userId) || 0) + dividend)
+    }
+    if (!hasAnyAmount) {
+      logger.info('所有用户持仓数量为0，无需发放股利')
+      return
+    }
+
+    // 执行发放
+    let totalDistributed = 0
+    let successCount = 0
+    const dividendRecords = [];
+    // 批量获取用户 uid（根据 userId），避免在循环内重复查询数据库
+    const userIds = Array.from(userDividendMap.keys())
+    const userRecords = await ctx.database.get('username', { userId: { $in: userIds } })
+    const uidMap = new Map(userRecords.map(r => [r.userId, r.uid]))
+    for (const [userId, dividend] of userDividendMap.entries()) {
+      try {
+        const uid = uidMap.get(userId)
+        if (!uid) {
+          logger.warn(`用户 ${userId} 没有 uid，跳过发放`)
+          continue
+        }
+        await ctx.monetary.add(uid, dividend)
+        totalDistributed += dividend
+        successCount++
+        logger.debug(`用户 ${userId} 获得股利 ${dividend}`)
+        dividendRecords.push({ date: today, userId, amount: dividend })//写入发放日志
+      } catch (error) {
+        logger.error(`为用户 ${userId} 发放股利失败: ${error instanceof Error ? error.message : error}`)
+      }
+    }
+    // 在循环外，将所有股利记录一次性插入
+    if (dividendRecords.length) {
+      await ctx.database.upsert('dividend_log', dividendRecords);
+    }
+
+    logger.info(`股利发放完成，共发放给 ${successCount} 位用户，总金额: ${totalDistributed}`)
+  }
+  // 注册定时任务
+  ctx.cron(config.dividendSchedule, async () => {
+    try {
+      await distributeDividend()
+    } catch (error) {
+      logger.error(`股利发放任务执行失败: ${error instanceof Error ? error.message : error}`)
+    }
+  })
+  logger.info(`股利发放定时任务已注册，调度规则: ${config.dividendSchedule}`)
+  // 注册手动触发命令（仅管理员可用）
+  ctx.command('force-dividend', '手动触发股利发放', { authority: 4 })
+    .action(async () => {
+      await distributeDividend()
+      return '股利发放任务已执行。'
+    })
+}

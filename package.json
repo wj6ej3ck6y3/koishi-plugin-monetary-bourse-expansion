@@ -1,0 +1,50 @@
+{
+  "name": "koishi-plugin-monetary-bourse-expansion",
+  "version": "1.0.0",
+  "main": "lib/index.js",
+  "typings": "lib/index.d.ts",
+  "files": [
+    "lib",
+    "dist"
+  ],
+  "scripts": {},
+  "koishi": {
+    "description": {
+      "en": "koishi-plugin-monetary-bourse expansion, adding dividend distribution based on holdings",
+      "zh": "koishi-plugin-monetary-bourse插件的拓展，新增了根據持倉發放股利的功能"
+    },
+    "service": {
+      "required": [
+        "database",
+        "monetary",
+        "monetary-bourse"
+      ]
+    },
+    "preview": false
+  },
+  "contributors": [
+    "wj6ej3cj6y3"
+  ],
+  "license": "MIT",
+  "keywords": [
+    "chatbot",
+    "koishi",
+    "plugin",
+    "交易所",
+    "stock",
+    "股票",
+    "金融",
+    "monetary",
+    "货币",
+    "投资",
+    "理财",
+    "经济",
+    "economy"
+  ],
+  "devDependencies": {},
+  "peerDependencies": {
+    "koishi": "^4.18.7",
+    "koishi-plugin-monetary": "^0.1.3",
+    "koishi-plugin-monetary-bourse": "^2.1.1"
+  }
+}
