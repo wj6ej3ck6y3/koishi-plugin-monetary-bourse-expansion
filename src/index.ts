@@ -59,6 +59,7 @@ declare module 'koishi' {
       amount: number
       price: number
       cost: number
+      profit: "double",
       startTime: Date
       endTime: Date
     }) => void
@@ -321,7 +322,7 @@ export function apply(ctx: Context, config: Config) {
         return
       }
 
-      const profit = Number(txn.cost)  // 已经是净收益
+      const profit = Number(txn.profit)  // 已经是净收益
       const [history] = await ctx.database.get('user_trade_history', { user_id: txn.userId })
 
       if (history) {
