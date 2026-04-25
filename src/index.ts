@@ -291,8 +291,8 @@ export function apply(ctx: Context, config: Config) {
   })
   logger.info(`股利发放定时任务已注册，调度规则: ${config.dividendSchedule}`)
   // 注册手动触发命令（仅管理员可用）
-  ctx.command('bourse.dividend', '手动触发股利发放', { authority: 4 })
-    .alias('bourse.发股利').alias('bourse.發股利')
+  ctx.command('stock.dividend', '手动触发股利发放', { authority: 4 })
+    .alias('stock.发股利').alias('stock.發股利')
     .action(async () => {
       await distributeDividend()
       return '股利发放任务已执行。'
@@ -342,8 +342,8 @@ export function apply(ctx: Context, config: Config) {
     })
 
     // 排行查询命令
-    ctx.command('bourse.profitrank', '查看累计卖出收益排行', { authority: 1 })
-      .alias('bourse.收益排行')
+    ctx.command('stock.profitrank', '查看累计卖出收益排行', { authority: 1 })
+      .alias('stock.收益排行')
       .action(async ({ session }) => {
         const limit = 10  // 显示前10名，可根据需要调整
         // 查询所有用户，按 total_profit 降序排序，取前 limit 条
