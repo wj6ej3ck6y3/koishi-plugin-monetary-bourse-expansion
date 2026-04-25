@@ -317,7 +317,7 @@ export function apply(ctx: Context, config: Config) {
     // 监听原始插件发出的卖出结算事件
     ctx.on('bourse/sell-settled', async (txn) => {
       // txn 结构来自 bourse_pending 表
-      if (!txn.userId || !txn.uid || txn.profit == null) {
+      if (!txn.userId || txn.profit == null) {
         logger.warn(`卖出订单缺少必要字段: ${JSON.stringify(txn)}`)
         return
       }
@@ -335,7 +335,6 @@ export function apply(ctx: Context, config: Config) {
       } else {
         await ctx.database.create('user_trade_history', {
           user_id: txn.userId,
-          uid: txn.uid,
           total_profit: profit,
           total_count: 1,
           last_trade_at: new Date(),
