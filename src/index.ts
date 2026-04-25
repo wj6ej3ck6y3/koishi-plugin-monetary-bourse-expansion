@@ -26,6 +26,8 @@ declare module 'koishi' {
       userId: string
       uid: number
       username: string
+      platform: string
+      channelId: string
     }
     user_trade_history: {
       user_id: string
@@ -346,21 +348,34 @@ export function apply(ctx: Context, config: Config) {
       .alias('stock.收益排行')
       .action(async ({ session }) => {
         const limit = 10  // 显示前10名，可根据需要调整
-        // 查询所有用户，按 total_profit 降序排序，取前 limit 条
-        const records = await ctx.database.get('user_trade_history', {}, {
+
+        const currentChannelId = session.channelId
+
+        // 1. 获取当前频道下的所有用户（从 username 表）
+        const usersInChannel = await ctx.database.get('username', {
+          platform: session.platform,
+          channelId: currentChannelId
+        })
+        if (!usersInChannel.length) {
+          return '本群暂无用户数据，请稍後再试。'
+        }
+        const userIds = usersInChannel.map(u => u.userId)
+        // 2. 查询这些用户的收益记录
+        const records = await ctx.database.get('user_trade_history', {
+          user_id: { $in: userIds }
+        }, {
           sort: { total_profit: 'desc' },
           limit: limit
         })
 
-        if (!records.length) return '暂无卖出收益记录。'
+        if (!records.length) {
+          return '本群暂无卖出收益记录。'
+        }
 
-        // 批量获取用户昵称（假设 username 表有 username 字段）
-        // 如果 username 表没有 username 字段，可以改为直接显示 user_id
-        const userIds = records.map(r => r.user_id)
-        const userRecords = await ctx.database.get('username', { userId: { $in: userIds } })
-        const nameMap = new Map(userRecords.map(u => [u.userId, u.username || u.userId]))
+        // 3. 构建 userId -> username 的映射
+        const nameMap = new Map(usersInChannel.map(u => [u.userId, u.username || u.userId]))
 
-        const lines = ['🏆 累计卖出收益排行 🏆']
+        const lines = ['🏆 本群累计卖出收益排行 🏆']
         for (let i = 0; i < records.length; i++) {
           const r = records[i]
           const displayName = nameMap.get(r.user_id) || r.user_id
