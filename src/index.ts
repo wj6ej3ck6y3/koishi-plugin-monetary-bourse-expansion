@@ -25,6 +25,7 @@ declare module 'koishi' {
     username: {
       userId: string
       uid: number
+      username: string
     }
     user_trade_history: {
       user_id: string
@@ -290,7 +291,8 @@ export function apply(ctx: Context, config: Config) {
   })
   logger.info(`股利发放定时任务已注册，调度规则: ${config.dividendSchedule}`)
   // 注册手动触发命令（仅管理员可用）
-  ctx.command('force-dividend', '手动触发股利发放', { authority: 4 })
+  ctx.command('bourse.dividend', '手动触发股利发放', { authority: 4 })
+    .alias('bourse.发股利').alias('bourse.發股利')
     .action(async () => {
       await distributeDividend()
       return '股利发放任务已执行。'
@@ -339,15 +341,33 @@ export function apply(ctx: Context, config: Config) {
       }
     })
 
-    // 查询命令
-    ctx.command('profit.history', '查看个人累计卖出收益', { authority: 1 })
+    // 排行查询命令
+    ctx.command('bourse.profitrank', '查看累计卖出收益排行', { authority: 1 })
+      .alias('bourse.收益排行')
       .action(async ({ session }) => {
-        const record = await ctx.database.get('user_trade_history', { user_id: session.userId })
-        if (!record.length) return '暂无历史卖出记录。'
-        const data = record[0]
-        // 获取货币名称（可以从原插件配置读取，这里简单处理）
-        const currency = config.currencyName
-        return `📈 累计卖出收益：${data.total_profit.toFixed(2)} ${currency}\n📊 交易次数：${data.total_count}\n⏱️ 最近结算：${new Date(data.last_trade_at).toLocaleString()}`
+        const limit = 10  // 显示前10名，可根据需要调整
+        // 查询所有用户，按 total_profit 降序排序，取前 limit 条
+        const records = await ctx.database.get('user_trade_history', {}, {
+          sort: { total_profit: 'desc' },
+          limit: limit
+        })
+
+        if (!records.length) return '暂无卖出收益记录。'
+
+        // 批量获取用户昵称（假设 username 表有 username 字段）
+        // 如果 username 表没有 username 字段，可以改为直接显示 user_id
+        const userIds = records.map(r => r.user_id)
+        const userRecords = await ctx.database.get('username', { userId: { $in: userIds } })
+        const nameMap = new Map(userRecords.map(u => [u.userId, u.username || u.userId]))
+
+        const lines = ['🏆 累计卖出收益排行 🏆']
+        for (let i = 0; i < records.length; i++) {
+          const r = records[i]
+          const displayName = nameMap.get(r.user_id) || r.user_id
+          const profit = r.total_profit.toFixed(2)
+          lines.push(`${i + 1}. ${displayName}：${profit} ${config.currencyName}`)
+        }
+        return lines.join('\n')
       })
   }
 }
