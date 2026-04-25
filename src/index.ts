@@ -317,7 +317,7 @@ export function apply(ctx: Context, config: Config) {
     // 监听原始插件发出的卖出结算事件
     ctx.on('bourse/sell-settled', async (txn) => {
       // txn 结构来自 bourse_pending 表
-      if (!txn.userId || !txn.uid || txn.cost == null) {
+      if (!txn.userId || !txn.uid || txn.profit == null) {
         logger.warn(`卖出订单缺少必要字段: ${JSON.stringify(txn)}`)
         return
       }
