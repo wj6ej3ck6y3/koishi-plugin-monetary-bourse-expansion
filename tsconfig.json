@@ -3,14 +3,14 @@
     "rootDir": "src",
     "outDir": "lib",
     "target": "es2022",
-    "module": "esnext",
-    "declaration": true,
-    "emitDeclarationOnly": true,
+    "module": "commonjs", // 改为 commonjs，更适合 Node.js
+    "declaration": true, // 生成 .d.ts
+    // "emitDeclarationOnly": true,     // 删除这行
     "composite": true,
     "incremental": true,
     "skipLibCheck": true,
     "esModuleInterop": true,
-    "moduleResolution": "bundler",
+    "moduleResolution": "node", // 改为 node
     "jsx": "react-jsx",
     "jsxImportSource": "@satorijs/element",
     "types": [

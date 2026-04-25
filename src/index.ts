@@ -24,14 +24,47 @@ declare module 'koishi' {
     }
     username: {
       userId: string
-      uid: string
+      uid: number
     }
+    user_trade_history: {
+      user_id: string
+      uid: number
+      total_profit: number
+      total_count: number
+      last_trade_at: Date
+    }
+    bourse_pending: {
+      id: number
+      userId: string
+      uid: number
+      stockId: string
+      type: 'buy' | 'sell'
+      amount: number
+      price: number
+      cost: number
+      startTime: Date
+      endTime: Date
+    }
+  }
+  interface Events {
+    'bourse/sell-settled': (txn: {
+      id: number
+      userId: string
+      uid: number
+      stockId: string
+      type: 'sell'
+      amount: number
+      price: number
+      cost: number
+      startTime: Date
+      endTime: Date
+    }) => void
   }
   interface Context {
     monetary: {
-      gain(userId: string, amount: number): Promise<void>
-      cost(userId: string, amount: number): Promise<void>
-      get(userId: string): Promise<number>
+      gain(userId: number, amount: number): Promise<void>
+      cost(userId: number, amount: number): Promise<void>
+      get(userId: number): Promise<number>
     }
     cron(expression: string, callback: () => Promise<void>): void
   }
@@ -43,24 +76,38 @@ export const inject = {
   optional: []
 }
 export interface Config {
+  currencyName: string// 显示的货币名称
   enableDividend: boolean// 是否启用股利发放功能
   dividendSchedule: string// 定时任务的 cron 表达式
+  randomRatioMin: number// 随机股利比率下限比率百分比（0~10）
   randomRatioMax: number// 随机股利比率上限比率百分比（0~10）
+  enableProfitTracking: boolean// 是否启用卖出收益追踪
   debugMode: boolean// 调试模式，为 true 时输出所有日志，为 false 时只输出 warn 和 error
 }
 
 export const Config: Schema<Config> = Schema.object({
+  currencyName: Schema.string()
+    .default('桐币')
+    .description('使用的货币名称'),
   enableDividend: Schema.boolean()
     .default(true)
     .description('是否启用股利发放功能'),
   dividendSchedule: Schema.string()
     .default('0 0 * * 1')        // 默认每周一0点
     .description('定时任务的 cron 表达式，例如每周一0点：0 0 * * 1'),
+  randomRatioMin: Schema.number()
+    .default(0)
+    .min(0)
+    .max(10)
+    .description('随机股利下限比率百分比'),
   randomRatioMax: Schema.number()
     .default(1)
     .min(0)
     .max(10)
     .description('随机股利上限比率百分比'),
+  enableProfitTracking: Schema.boolean()
+    .default(true)
+    .description('是否启用卖收益追踪功能'),
   debugMode: Schema.boolean()
     .default(true)
     .description('开启调试日志（显示 info/success 等非 error/warn 日志）'),
@@ -69,7 +116,7 @@ export const Config: Schema<Config> = Schema.object({
 export function apply(ctx: Context, config: Config) {
   const logger = {
     info: (msg: string) => config.debugMode && ctx.logger.info(msg),
-    debug: (msg: string) => config.debugMode && ctx.logger.debug(msg),
+    success: (msg: string) => config.debugMode && ctx.logger.success(msg),
     warn: (msg: string) => ctx.logger.warn(msg),
     error: (msg: string) => ctx.logger.error(msg),
   }
@@ -102,13 +149,12 @@ export function apply(ctx: Context, config: Config) {
     logger.info(`开始发放股利 (日期: ${today.toISOString().slice(0, 10)})`)
 
     // 检查今日是否已经发放过
-    function getTodayRange() {
+    const { start, end } = (() => {
       const now = new Date()
-      const start = new Date(now.getFullYear(), now.getMonth(), now.getDate())
-      const end = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1)
-      return { start, end }
-    }
-    const { start, end } = getTodayRange()
+      const s = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+      const e = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1)
+      return { start: s, end: e }
+    })()
     const existingLogs = await ctx.database.get('dividend_log', {
       date: { $gte: start, $lt: end }
     })
@@ -135,7 +181,7 @@ export function apply(ctx: Context, config: Config) {
           priceMap.set(stockId, latest[0].price)
         }
       }
-      logger.debug(`获取到 ${stockIds.length} 支股票的最新价格`)
+      logger.success(`获取到 ${stockIds.length} 支股票的最新价格`)
       return priceMap
     }
     // 从 bourse_holding 表中查询所有持仓记录
@@ -154,12 +200,11 @@ export function apply(ctx: Context, config: Config) {
     }
 
     // 生成本次发放的随机比率（0 ~ randomRatioMax）
-    const ratio = Math.random() * config.randomRatioMax / 100
+    const ratio = (config.randomRatioMin + Math.random() * (config.randomRatioMax - config.randomRatioMin)) / 100
     logger.info(`本次股利发放随机比率: ${(ratio * 100).toFixed(2)}%`)
 
     // 更新所有股票的价格并记录到 bourse_history
     const now = new Date()// 当前时间作为价格记录时间
-    const newPrices = new Map<string, number>()
     // 获取所有被持仓的股票 ID
     const heldStockIds = new Set(holdings.map(h => h.stockId))
     const priceRecords = [];
@@ -169,7 +214,6 @@ export function apply(ctx: Context, config: Config) {
       let newPrice = Math.round(currentPrice * (1 - ratio) * 100) / 100
       // 避免价格出现负数（极小情况）
       if (newPrice < 0) newPrice = 0
-      newPrices.set(stockId, newPrice)
       priceRecords.push({ stockId, price: newPrice, time: now });
     }
     // 在循环外，将所有价格记录一次性插入
@@ -223,7 +267,7 @@ export function apply(ctx: Context, config: Config) {
         await ctx.monetary.gain(uid, dividend)
         totalDistributed += dividend
         successCount++
-        logger.debug(`用户 ${userId} 获得股利 ${dividend}`)
+        logger.success(`用户 ${userId} 获得股利 ${dividend}`)
         dividendRecords.push({ date: today, userId, amount: dividend })//写入发放日志
       } catch (error) {
         logger.error(`为用户 ${userId} 发放股利失败: ${error instanceof Error ? error.message : error}`)
@@ -251,4 +295,59 @@ export function apply(ctx: Context, config: Config) {
       await distributeDividend()
       return '股利发放任务已执行。'
     })
+
+  // 卖出收益追踪功能
+  if (config.enableProfitTracking) {
+    // 扩展历史收益表
+    ctx.database.extend('user_trade_history', {
+      user_id: 'string',
+      uid: 'unsigned',
+      total_profit: 'float',
+      total_count: 'integer',
+      last_trade_at: 'timestamp',
+    }, {
+      primary: 'user_id',
+    })
+
+    // 监听原始插件发出的卖出结算事件
+    ctx.on('bourse/sell-settled', async (txn) => {
+      // txn 结构来自 bourse_pending 表
+      if (!txn.userId || !txn.uid || txn.cost == null) {
+        logger.warn(`卖出订单缺少必要字段: ${JSON.stringify(txn)}`)
+        return
+      }
+
+      const profit = Number(txn.cost)  // 已经是净收益
+      const [history] = await ctx.database.get('user_trade_history', { user_id: txn.userId })
+
+      if (history) {
+        await ctx.database.set('user_trade_history', { user_id: txn.userId }, {
+          total_profit: history.total_profit + profit,
+          total_count: history.total_count + 1,
+          last_trade_at: new Date(),
+        })
+        logger.info(`用户 ${txn.userId} 卖出收益 +${profit} (总收益: ${history.total_profit + profit})`)
+      } else {
+        await ctx.database.create('user_trade_history', {
+          user_id: txn.userId,
+          uid: txn.uid,
+          total_profit: profit,
+          total_count: 1,
+          last_trade_at: new Date(),
+        })
+        logger.info(`用户 ${txn.userId} 首次卖出收益记录: ${profit}`)
+      }
+    })
+
+    // 查询命令
+    ctx.command('profit.history', '查看个人累计卖出收益', { authority: 1 })
+      .action(async ({ session }) => {
+        const record = await ctx.database.get('user_trade_history', { user_id: session.userId })
+        if (!record.length) return '暂无历史卖出记录。'
+        const data = record[0]
+        // 获取货币名称（可以从原插件配置读取，这里简单处理）
+        const currency = config.currencyName
+        return `📈 累计卖出收益：${data.total_profit.toFixed(2)} ${currency}\n📊 交易次数：${data.total_count}\n⏱️ 最近结算：${new Date(data.last_trade_at).toLocaleString()}`
+      })
+  }
 }
